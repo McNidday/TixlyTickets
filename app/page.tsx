@@ -3,7 +3,7 @@
 import { useMemo, useState, useEffect, type CSSProperties } from "react";
 import { DateTime } from "luxon";
 import { EVENT_DATE } from "@/lib/event-config";
-import { blobPdfKey } from "@/lib/paid-artifacts";
+import { blobPdfKey } from "@/lib/blob-pd-key";
 
 const EVENT_NAME = "KENYATTA UNIVERSITY ORCHESTRA";
 const EVENT_SUBTITLE = "An Evening of Symphonic Excellence";

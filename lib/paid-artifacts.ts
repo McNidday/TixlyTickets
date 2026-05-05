@@ -1,23 +1,10 @@
-import { access, readFile } from "node:fs/promises";
-import { constants as fsConstants } from "node:fs";
-import path from "node:path";
 import { DateTime } from "luxon";
 import QRCode from "qrcode";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type { PDFFont, PDFPage } from "pdf-lib";
 import type { Booking } from "@/lib/store";
 import { head, put, get } from "@vercel/blob";
-
-const PAID_DIR = path.join(process.cwd(), "data", "paid");
-
-export async function pathExists(filePath: string): Promise<boolean> {
-  try {
-    await access(filePath, fsConstants.F_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
+import { blobPdfKey } from "@/lib/blob-pd-key";
 
 export interface PaidBookingJson {
   savedAt: string;
@@ -381,11 +368,6 @@ async function renderPdf(record: PaidBookingJson): Promise<Buffer> {
 
   const bytes = await pdfDoc.save();
   return Buffer.from(bytes);
-}
-
-export function blobPdfKey(bookingId: string): string {
-  const safeId = bookingId.replace(/[^\w.-]+/g, "_");
-  return `${safeId}.pdf`;
 }
 
 /**
