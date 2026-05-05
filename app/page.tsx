@@ -493,7 +493,7 @@ export default function HomePage() {
                   {/* FIX: button is disabled while downloading and shows a
                       loading label so the user knows something is happening. */}
                   <a
-                    href={`${process.env.NEXT_TICKET_STORAGE_URL}/${blobPdfKey(booking.bookingId)}`}
+                    href={`${process.env.NEXT_PUBLIC_TICKET_STORAGE_URL}/${blobPdfKey(booking.bookingId)}`}
                     download={`ticket-${blobPdfKey(booking.bookingId)}.pdf`}
                     className="modal-btn green"
                     style={{
