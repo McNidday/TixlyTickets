@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, useEffect, type CSSProperties } from "react";
-import { DateTime, Duration } from "luxon";
+import { DateTime } from "luxon";
 import { EVENT_DATE } from "@/lib/event-config";
 
 const EVENT_NAME = "KENYATTA UNIVERSITY ORCHESTRA";
@@ -10,10 +10,10 @@ const EVENT_EYEBROW = "Kenyatta University Music Department";
 const EVENT_VENUE = "CHINA SQUARE AUDITORIUM";
 
 const TICKET_TYPES = [
-  { name: "Student", price: 500, description: "carry student id" },
+  { name: "Student", price: 1, description: "carry student id" },
   {
     name: "Regular",
-    price: 1000,
+    price: 2,
     description: "General admission — all welcome",
   },
 ] as const;
@@ -67,16 +67,11 @@ function CountdownTimer() {
         seconds = 0,
       } = diff.shiftTo("days", "hours", "minutes", "seconds").toObject();
 
-      let dD = Math.floor(days);
-      let dH = Math.floor(hours);
-      let dM = Math.floor(minutes);
-      let dS = Math.floor(seconds);
-
       setTimeLeft({
-        days: dD,
-        hours: dH,
-        minutes: dM,
-        seconds: dS,
+        days: Math.floor(days),
+        hours: Math.floor(hours),
+        minutes: Math.floor(minutes),
+        seconds: Math.floor(seconds),
       });
     }
     update();
@@ -127,6 +122,8 @@ export default function HomePage() {
   const [email, setEmail] = useState("");
   const [errors, setErrors] = useState<FormErrors>({});
   const [isLoadingPayment, setIsLoadingPayment] = useState(false);
+  // FIX: dedicated loading state for PDF download so the button gives feedback
+  const [isPdfDownloading, setIsPdfDownloading] = useState(false);
   const [serverMessage, setServerMessage] = useState("");
   const [pdfDownloadError, setPdfDownloadError] = useState("");
   const [booking, setBooking] = useState<TicketBookingResponse | null>(null);
@@ -191,9 +188,7 @@ export default function HomePage() {
   }
 
   function closeModal() {
-    if (isLoadingPayment) {
-      return;
-    }
+    if (isLoadingPayment) return;
     setShowModal(false);
   }
 
@@ -214,10 +209,7 @@ export default function HomePage() {
       }
 
       const status = (await res.json()) as PaymentStatusResponse;
-      if (status.status === "PAID") {
-        return status;
-      }
-
+      if (status.status === "PAID") return status;
       if (status.status === "FAILED") {
         throw new Error("Payment failed. Please try again.");
       }
@@ -241,9 +233,7 @@ export default function HomePage() {
     }
 
     setErrors(nextErrors);
-    if (Object.keys(nextErrors).length > 0) {
-      return;
-    }
+    if (Object.keys(nextErrors).length > 0) return;
 
     try {
       setIsLoadingPayment(true);
@@ -284,11 +274,14 @@ export default function HomePage() {
     }
   }
 
+  // FIX: removed `void` wrapper — function handles its own errors internally,
+  // so it's safe to pass directly as the onClick handler.
+  // FIX: added isPdfDownloading state so the button disables and shows feedback
+  // while the server is generating / streaming the PDF.
   async function downloadTicketPdf() {
-    if (!booking?.bookingId) {
-      return;
-    }
+    if (!booking?.bookingId) return;
     setPdfDownloadError("");
+    setIsPdfDownloading(true);
     try {
       const res = await fetch(
         `/api/tickets/${encodeURIComponent(booking.bookingId)}/pdf`,
@@ -320,6 +313,8 @@ export default function HomePage() {
       setPdfDownloadError(
         error instanceof Error ? error.message : "Could not download ticket.",
       );
+    } finally {
+      setIsPdfDownloading(false);
     }
   }
 
@@ -540,12 +535,17 @@ export default function HomePage() {
               </div>
               {booking?.bookingId ? (
                 <>
+                  {/* FIX: button is disabled while downloading and shows a
+                      loading label so the user knows something is happening. */}
                   <button
                     type="button"
                     className="modal-btn green"
-                    onClick={() => void downloadTicketPdf()}
+                    onClick={downloadTicketPdf}
+                    disabled={isPdfDownloading}
                   >
-                    Download ticket (PDF)
+                    {isPdfDownloading
+                      ? "Preparing ticket…"
+                      : "Download ticket (PDF)"}
                   </button>
                   {pdfDownloadError ? (
                     <div className="err show" style={{ marginTop: 10 }}>

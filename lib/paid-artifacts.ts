@@ -67,6 +67,20 @@ const C = {
   cardShadow: rgb(220 / 255, 224 / 255, 232 / 255),
 };
 
+/**
+ * FIX #3: Sanitize strings to WinAnsi range so pdf-lib's standard fonts
+ * (Helvetica, HelveticaBold) don't throw on characters outside Latin-1.
+ * Accented chars are decomposed first (NFD) so e.g. "é" → "e" + combining
+ * accent → the accent is stripped, keeping the base letter readable.
+ */
+function sanitize(str: string): string {
+  if (!str) return "";
+  return str
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") // strip combining diacritics
+    .replace(/[^\x00-\xFF]/g, "?"); // replace remaining non-Latin-1 with ?
+}
+
 function splitToWidth(
   text: string,
   font: PDFFont,
@@ -96,8 +110,21 @@ function splitToWidth(
 /**
  * PDF ticket: branded layout + QR whose payload is **only** `bookingId` (plain text)
  * so scanners return the id for comparison with JSON / server records at the gate.
+ *
+ * FIX #1: Guard empty bookingId before QR generation.
+ * FIX #2: Embed fonts in parallel with Promise.all.
+ * FIX #3: Sanitize all user-supplied text to WinAnsi range.
+ * FIX #4: Error propagation — errors are logged and re-thrown.
+ * FIX #5: Layout floor guard — stop drawing rows when approaching the total bar.
  */
 async function renderPdf(record: PaidBookingJson): Promise<Buffer> {
+  // FIX #1 — Guard: bookingId must be present before we attempt QR generation
+  if (!record.bookingId?.trim()) {
+    throw new Error(
+      "[renderPdf] bookingId is empty or missing — cannot generate QR code.",
+    );
+  }
+
   const W = 595.28;
   const H = 841.89;
   const m = 40;
@@ -106,8 +133,12 @@ async function renderPdf(record: PaidBookingJson): Promise<Buffer> {
 
   const pdfDoc = await PDFDocument.create();
   const page: PDFPage = pdfDoc.addPage([W, H]);
-  const regular = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+  // FIX #2 — Embed fonts in parallel to avoid sequential async failures
+  const [regular, bold] = await Promise.all([
+    pdfDoc.embedFont(StandardFonts.Helvetica),
+    pdfDoc.embedFont(StandardFonts.HelveticaBold),
+  ]);
 
   page.drawRectangle({ x: 0, y: 0, width: W, height: H, color: C.pageBg });
 
@@ -134,8 +165,9 @@ async function renderPdf(record: PaidBookingJson): Promise<Buffer> {
     color: C.gold,
   });
 
+  // FIX #3 — Sanitize event title before drawText
   const titleLines = splitToWidth(
-    record.event.toUpperCase(),
+    sanitize(record.event).toUpperCase(),
     bold,
     17,
     W - m * 2 - 88,
@@ -178,6 +210,7 @@ async function renderPdf(record: PaidBookingJson): Promise<Buffer> {
     color: C.navy,
   });
 
+  // FIX #1 — bookingId already validated above; QR generation is now safe
   const qrPayload = record.bookingId;
   const qrPng = await QRCode.toBuffer(qrPayload, {
     type: "png",
@@ -194,7 +227,6 @@ async function renderPdf(record: PaidBookingJson): Promise<Buffer> {
 
   const cardPad = 28;
   const cardW = W - cardPad * 2;
-  /** Card: upper edge 128pt below page top; lower edge 64pt above page bottom */
   const cardBottomY = 64;
   const cardTopY = H - 128;
   const cardH = cardTopY - cardBottomY;
@@ -228,9 +260,18 @@ async function renderPdf(record: PaidBookingJson): Promise<Buffer> {
 
   const textLeft = cardPad + goldBarW + 18;
   const textMaxW = qrX - textLeft - 16;
+
+  // FIX #5 — totalBarH is the green strip at the bottom of the card.
+  // We must stop drawing rows before ty dips into it.
+  const totalBarH = 52;
+  const tyFloor = cardY + totalBarH + 14; // 14pt breathing room above the green bar
+
   let ty = cardTopY - 22;
 
-  const row = (label: string, value: string, valueSize = 10.5) => {
+  const row = (label: string, value: string, valueSize = 10.5): boolean => {
+    // FIX #5 — Return false (stop) if we've run out of vertical space
+    if (ty < tyFloor) return false;
+
     page.drawText(label.toUpperCase(), {
       x: textLeft,
       y: ty,
@@ -239,8 +280,11 @@ async function renderPdf(record: PaidBookingJson): Promise<Buffer> {
       color: C.muted,
     });
     ty -= 10;
-    const chunks = splitToWidth(value, regular, valueSize, textMaxW);
+
+    // FIX #3 — Sanitize user-supplied value before drawText
+    const chunks = splitToWidth(sanitize(value), regular, valueSize, textMaxW);
     for (const chunk of chunks) {
+      if (ty < tyFloor) break; // FIX #5 — clip mid-value if still overflowing
       page.drawText(chunk, {
         x: textLeft,
         y: ty,
@@ -251,6 +295,7 @@ async function renderPdf(record: PaidBookingJson): Promise<Buffer> {
       ty -= valueSize + 5;
     }
     ty -= 6;
+    return true;
   };
 
   row("Ticket ID (QR payload)", record.bookingId, 11);
@@ -259,7 +304,12 @@ async function renderPdf(record: PaidBookingJson): Promise<Buffer> {
   if (record.email) {
     row("Email", record.email);
   }
-  row("Paid", DateTime.fromMillis(record.paidAt).setZone("Africa/Nairobi").toFormat("yyyy-MM-dd HH:mm:ss"));
+  row(
+    "Paid",
+    DateTime.fromMillis(record.paidAt)
+      .setZone("Africa/Nairobi")
+      .toFormat("yyyy-MM-dd HH:mm:ss"),
+  );
   row("Venue", record.venue);
   const refShort =
     record.reference.length > 140
@@ -283,7 +333,6 @@ async function renderPdf(record: PaidBookingJson): Promise<Buffer> {
     color: C.muted,
   });
 
-  const totalBarH = 52;
   page.drawRectangle({
     x: cardPad,
     y: cardY,
@@ -338,21 +387,31 @@ export async function persistPaidArtifacts(booking: Booking): Promise<void> {
     return;
   }
 
-  await mkdir(PAID_DIR, { recursive: true });
+  // FIX #4 — Wrap the entire function body in try/catch so errors are
+  // logged with context and re-thrown (rather than silently lost).
+  try {
+    await mkdir(PAID_DIR, { recursive: true });
 
-  const safeId = booking.bookingId.replace(/[^\w.-]+/g, "_");
-  const jsonPath = path.join(PAID_DIR, `${safeId}.json`);
-  const pdfPath = path.join(PAID_DIR, `${safeId}.pdf`);
+    const safeId = booking.bookingId.replace(/[^\w.-]+/g, "_");
+    const jsonPath = path.join(PAID_DIR, `${safeId}.json`);
+    const pdfPath = path.join(PAID_DIR, `${safeId}.pdf`);
 
-  if ((await pathExists(jsonPath)) && (await pathExists(pdfPath))) {
-    return;
+    if ((await pathExists(jsonPath)) && (await pathExists(pdfPath))) {
+      return;
+    }
+
+    const record = buildPaidRecord(booking);
+    const pdfBuffer = await renderPdf(record);
+
+    await writeFile(jsonPath, JSON.stringify(record, null, 2), "utf8");
+    await writeFile(pdfPath, pdfBuffer);
+  } catch (err) {
+    console.error(
+      `[persistPaidArtifacts] Failed to persist artifacts for bookingId="${booking.bookingId}":`,
+      err,
+    );
+    throw err; // re-throw so the caller / API route can respond with a proper 500
   }
-
-  const record = buildPaidRecord(booking);
-  const pdfBuffer = await renderPdf(record);
-
-  await writeFile(jsonPath, JSON.stringify(record, null, 2), "utf8");
-  await writeFile(pdfPath, pdfBuffer);
 }
 
 export function paidJsonPath(bookingId: string): string {

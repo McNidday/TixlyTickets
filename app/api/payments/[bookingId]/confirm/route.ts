@@ -37,7 +37,6 @@ export async function POST(request: Request, context: RouteContext) {
     console.error("[paid-artifacts]", err);
   }
 
-  // Send data to Google Sheets (non-critical, won't fail if missing)
   try {
     await appendToGoogleSheet(booking);
   } catch (err) {
