@@ -11,10 +11,10 @@ const EVENT_EYEBROW = "Kenyatta University Music Department";
 const EVENT_VENUE = "CHINA SQUARE AUDITORIUM";
 
 const TICKET_TYPES = [
-  { name: "Student", price: 500, description: "carry student id" },
+  { name: "Student", price: 1, description: "carry student id" },
   {
     name: "Regular",
-    price: 1000,
+    price: 2,
     description: "General admission — all welcome",
   },
 ] as const;
