@@ -8,6 +8,7 @@ export async function GET(_request: Request, context: RouteContext) {
   const booking = bookings.get(bookingId);
 
   if (!booking) {
+    console.error(`Booking not found: ${bookingId}`);
     return NextResponse.json(
       { message: "Booking not found." },
       { status: 404 },
