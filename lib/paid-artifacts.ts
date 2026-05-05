@@ -1,4 +1,4 @@
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import path from "node:path";
 import { DateTime } from "luxon";
@@ -6,6 +6,7 @@ import QRCode from "qrcode";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type { PDFFont, PDFPage } from "pdf-lib";
 import type { Booking } from "@/lib/store";
+import { head, put, get } from "@vercel/blob";
 
 const PAID_DIR = path.join(process.cwd(), "data", "paid");
 
@@ -382,68 +383,68 @@ async function renderPdf(record: PaidBookingJson): Promise<Buffer> {
   return Buffer.from(bytes);
 }
 
+export function blobPdfKey(bookingId: string): string {
+  const safeId = bookingId.replace(/[^\w.-]+/g, "_");
+  return `${safeId}.pdf`;
+}
+
+/**
+ * Persists the booking JSON and PDF ticket to Vercel Blob.
+ * Skips upload if both blobs already exist (idempotent).
+ * Requires BLOB_READ_WRITE_TOKEN in your Vercel environment variables.
+ */
 export async function persistPaidArtifacts(booking: Booking): Promise<void> {
-  if (booking.status !== "PAID" || booking.paidAt == null) {
-    return;
-  }
+  if (booking.status !== "PAID" || booking.paidAt == null) return;
 
-  // FIX #4 — Wrap the entire function body in try/catch so errors are
-  // logged with context and re-thrown (rather than silently lost).
   try {
-    await mkdir(PAID_DIR, { recursive: true });
+    const pdfKey = blobPdfKey(booking.bookingId);
 
-    const safeId = booking.bookingId.replace(/[^\w.-]+/g, "_");
-    const jsonPath = path.join(PAID_DIR, `${safeId}.json`);
-    const pdfPath = path.join(PAID_DIR, `${safeId}.pdf`);
+    const pdfExists = await head(pdfKey)
+      .then(() => true)
+      .catch(() => false);
 
-    if ((await pathExists(jsonPath)) && (await pathExists(pdfPath))) {
-      return;
-    }
+    if (pdfExists) return; // already persisted, skip
 
     const record = buildPaidRecord(booking);
     const pdfBuffer = await renderPdf(record);
 
-    await writeFile(jsonPath, JSON.stringify(record, null, 2), "utf8");
-    await writeFile(pdfPath, pdfBuffer);
+    // Upload PDF
+    await put(pdfKey, pdfBuffer, {
+      access: "public",
+      contentType: "application/pdf",
+      addRandomSuffix: false,
+    });
   } catch (err) {
     console.error(
       `[persistPaidArtifacts] Failed to persist artifacts for bookingId="${booking.bookingId}":`,
       err,
     );
-    throw err; // re-throw so the caller / API route can respond with a proper 500
+    throw err;
   }
 }
 
-export function paidJsonPath(bookingId: string): string {
-  const safeId = bookingId.replace(/[^\w.-]+/g, "_");
-  return path.join(PAID_DIR, `${safeId}.json`);
-}
-
-export function paidPdfPath(bookingId: string): string {
-  const safeId = bookingId.replace(/[^\w.-]+/g, "_");
-  return path.join(PAID_DIR, `${safeId}.pdf`);
-}
-
 /**
- * Serves a paid ticket PDF from disk when the in-memory Map no longer has the booking
- * (e.g. dev server restart). Validates the JSON snapshot is PAID and matches bookingId.
+ * Reads the paid ticket PDF from Vercel Blob.
+ * Returns null if either blob is missing or validation fails.
  */
 export async function readPaidTicketPdfFromDisk(
   bookingId: string,
 ): Promise<Buffer | null> {
-  const jsonPath = paidJsonPath(bookingId);
-  const pdfPath = paidPdfPath(bookingId);
-  if (!(await pathExists(jsonPath)) || !(await pathExists(pdfPath))) {
-    return null;
-  }
   try {
-    const raw = await readFile(jsonPath, "utf8");
-    const parsed = JSON.parse(raw) as PaidBookingJson;
-    if (parsed.status !== "PAID" || parsed.bookingId !== bookingId) {
-      return null;
+    const pdfKey = blobPdfKey(bookingId);
+
+    const response = await get(pdfKey, { access: "public" });
+    if (!response) return null;
+
+    const { stream } = response;
+    if (!stream) return null;
+
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of stream) {
+      chunks.push(chunk);
     }
+    return Buffer.concat(chunks);
   } catch {
     return null;
   }
-  return readFile(pdfPath);
 }

@@ -3,6 +3,7 @@
 import { useMemo, useState, useEffect, type CSSProperties } from "react";
 import { DateTime } from "luxon";
 import { EVENT_DATE } from "@/lib/event-config";
+import { blobPdfKey } from "@/lib/paid-artifacts";
 
 const EVENT_NAME = "KENYATTA UNIVERSITY ORCHESTRA";
 const EVENT_SUBTITLE = "An Evening of Symphonic Excellence";
@@ -10,10 +11,10 @@ const EVENT_EYEBROW = "Kenyatta University Music Department";
 const EVENT_VENUE = "CHINA SQUARE AUDITORIUM";
 
 const TICKET_TYPES = [
-  { name: "Student", price: 500, description: "carry student id" },
+  { name: "Student", price: 1, description: "carry student id" },
   {
     name: "Regular",
-    price: 1000,
+    price: 2,
     description: "General admission — all welcome",
   },
 ] as const;
@@ -122,8 +123,6 @@ export default function HomePage() {
   const [email, setEmail] = useState("");
   const [errors, setErrors] = useState<FormErrors>({});
   const [isLoadingPayment, setIsLoadingPayment] = useState(false);
-  // FIX: dedicated loading state for PDF download so the button gives feedback
-  const [isPdfDownloading, setIsPdfDownloading] = useState(false);
   const [serverMessage, setServerMessage] = useState("");
   const [pdfDownloadError, setPdfDownloadError] = useState("");
   const [booking, setBooking] = useState<TicketBookingResponse | null>(null);
@@ -271,50 +270,6 @@ export default function HomePage() {
       );
     } finally {
       setIsLoadingPayment(false);
-    }
-  }
-
-  // FIX: removed `void` wrapper — function handles its own errors internally,
-  // so it's safe to pass directly as the onClick handler.
-  // FIX: added isPdfDownloading state so the button disables and shows feedback
-  // while the server is generating / streaming the PDF.
-  async function downloadTicketPdf() {
-    if (!booking?.bookingId) return;
-    setPdfDownloadError("");
-    setIsPdfDownloading(true);
-    try {
-      const res = await fetch(
-        `/api/tickets/${encodeURIComponent(booking.bookingId)}/pdf`,
-        { cache: "no-store" },
-      );
-
-      if (!res.ok) {
-        const errJson = (await res.json().catch(() => null)) as {
-          message?: string;
-        } | null;
-        throw new Error(errJson?.message ?? `Download failed (${res.status})`);
-      }
-
-      const blob = await res.blob();
-      const safeId = booking.bookingId.replace(/[^\w.-]+/g, "_");
-      const filename = `ticket-${safeId}.pdf`;
-
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = filename;
-      anchor.rel = "noopener";
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(url);
-    } catch (error: unknown) {
-      console.error("PDF download error:", error);
-      setPdfDownloadError(
-        error instanceof Error ? error.message : "Could not download ticket.",
-      );
-    } finally {
-      setIsPdfDownloading(false);
     }
   }
 
@@ -537,21 +492,22 @@ export default function HomePage() {
                 <>
                   {/* FIX: button is disabled while downloading and shows a
                       loading label so the user knows something is happening. */}
-                  <button
-                    type="button"
+                  <a
+                    href={`${process.env.NEXT_TICKET_STORAGE_URL}/${blobPdfKey(booking.bookingId)}`}
+                    download={`ticket-${blobPdfKey(booking.bookingId)}.pdf`}
                     className="modal-btn green"
-                    onClick={downloadTicketPdf}
-                    disabled={isPdfDownloading}
+                    style={{
+                      display: "block",
+                      textAlign: "center",
+                      textDecoration: "none",
+                    }}
                   >
-                    {isPdfDownloading
-                      ? "Preparing ticket…"
-                      : "Download ticket (PDF)"}
-                  </button>
-                  {pdfDownloadError ? (
-                    <div className="err show" style={{ marginTop: 10 }}>
-                      {pdfDownloadError}
-                    </div>
-                  ) : null}
+                    {pdfDownloadError ? (
+                      <div className="err show" style={{ marginTop: 10 }}>
+                        {pdfDownloadError}
+                      </div>
+                    ) : null}
+                  </a>
                 </>
               ) : null}
               <button
