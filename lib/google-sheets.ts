@@ -83,6 +83,8 @@ function formatPhoneNumber(phone: string | number) {
 }
 
 export async function appendToGoogleSheet(booking: Booking): Promise<void> {
+  if (booking.status !== "PAID" || booking.paidAt == null) return;
+
   const spreadsheetId = getSpreadsheetId();
 
   // Skip if spreadsheet ID not configured
