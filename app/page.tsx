@@ -11,12 +11,16 @@ const EVENT_EYEBROW = "Kenyatta University Music Department";
 const EVENT_VENUE = "CONFICIOUS HALL";
 
 const TICKET_TYPES = [
-  { name: "Student", price: 500, description: "carry student id" },
+  { name: "Student", price: 500, description: "Carry student ID" },
   {
     name: "Regular",
     price: 1000,
     description: "General admission — all welcome",
   },
+  { name: "Couples", price: 900, description: "Entry for 2 people" },
+  { name: "Group of 3", price: 1050, description: "Entry for 3 people" },
+  { name: "Group of 6", price: 2000, description: "Entry for 6 people" },
+  { name: "VIP", price: 2000, description: "VIP experience — premium seating" },
 ] as const;
 
 type TicketName = (typeof TICKET_TYPES)[number]["name"];
